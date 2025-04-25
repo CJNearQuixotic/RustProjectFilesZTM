@@ -76,6 +76,10 @@ struct MessageQueueStorageError {
 enum FileStoreError {
     #[error("IO error")]
     IO(#[from] std::io::Error),
+    #[error("invalid line format")]
+    WrongFormat,
+    #[error("ID parse error")]
+    ParseID(#[from] ParseIntError),
     // add more variants if needed
 }
 
@@ -148,6 +152,92 @@ impl MessageQueue {
 * - `FileStore` struct
 * - implementation blocks
 ********************************************/
+
+trait MessageQueueStorage {
+    fn save(&self, queue: &MessageQueue) -> Result<(), MessageQueueStorageError>;
+    fn load(&self) -> Result<MessageQueue, MessageQueueStorageError>;
+
+
+struct FileStore {
+    path: PathBuf
+}
+
+impl FileStore {
+    pub fn new<P>(path: P) -> Self
+    where 
+        P: Into<PathBuf>,
+    {
+        Self {path: path.into()}
+    }
+
+    fn load_impl(&self) -> Result<MessageQueue, FileStoreError> {
+        use std::fs::OpenOptions;
+        use std::io::BufWriter;
+        use std::io::Write;
+
+        let reader = {
+            let file = OpenOptions::new()
+                .read(true)
+                .open(&self.path)
+                .map_err(FileStoreError::from)?;
+            BufReader::new(file)
+        };
+
+        let mut messages = VecDeque::default();
+
+        for line in reader.lines() {
+            let line = line.map_err(FileStoreError::from)?;
+            let parts: Vec<&str> = line.splitn(2, ',').collect();
+            if parts.len() != 2 {
+                return Err(FileStoreError::WrongFormat)?;
+            }
+            let id = parts[0].parse::<u32>().map_err(FileStoreError::ParseID)?;
+            let content = parts[1].to_string();
+
+            messages.push_back(Message {id, content});
+        }
+
+        let next_id = messages.iter().map(|msg| msg.id).max().unwrap_or_default() + 1;
+
+        Ok(MessageQueue { messages, next_id})
+    }
+
+    fn save_impl(&self, queue: &MessageQueue) -> Result<(), FileStoreError> {
+        use std::fs::OpenOptions;
+        use std::io::BufWriter;
+        use std::io::Write;
+
+        let scratch_path = {
+            let mut path = self.path.clone();
+            path.set_extension(".tmp");
+            path
+        };
+        let mut writer = {
+            let file = OpenOperations::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(&scratch_path)?;
+            BufWriter::new(file)
+        };
+        for msg in queue.iter() {
+            writeln!(writer, "{}, {}", msg.id, msg.content)?
+        }
+
+        std::fs::rename(scratch_path, &self.path)?;
+
+        Ok(())
+    }
+}
+
+impl MessageQueueStorage for FileStore {
+    fn save(&self, queue: &MessageQueue) -> Result<(), MessageQueueStorageError> {
+        Ok(self.save_impl(queue)?)
+    }
+    fn load(&self) -> Result<MessageQueue, MessageQueueStorageError> {
+        Ok(self.load_impl()?)
+    }
+}
 
 /// *****************************************************************
 /// use `cargo test --bin mc-01` to check your work.

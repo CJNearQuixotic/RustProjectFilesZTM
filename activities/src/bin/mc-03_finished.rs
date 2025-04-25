@@ -53,6 +53,23 @@ impl Account for BankAccount {
     }
 }
 
+trait AccountExt {
+    fn withdraw(&mut self, amount: f64);
+    fn deposit(&mut self, amount: f64);
+}
+
+impl<T> AccountExt for T
+where T: Account {
+    fn withdraw(&mut self, amount: f64) {
+        let amount = amount.abs();
+        self.adjust(-amount);
+    }
+
+    fn deposit(&mut self, amount: f64) {
+        self.adjust(amount);
+    }
+}
+
 /**********************************************
 * Do not change
 **********************************************/
